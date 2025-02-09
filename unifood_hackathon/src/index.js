@@ -1,72 +1,94 @@
+// src/index.js
 import express from 'express';
 import cors from 'cors';
-import { body, validationResult } from 'express-validator';
-import { initializeDatabase, getDatabase } from './database/init.js';
+import helmet from 'helmet';
+import dotenv from 'dotenv';
+import { router as authRouter } from './routes/auth.js';
+import { router as apiRouter } from './routes/api.js';
+import { initializeDatabase, closeDatabase } from './database/init.js';
+
+// Load environment variables
+dotenv.config();
+
+// Validate required environment variables
+const requiredEnvVars = ['JWT_SECRET', 'RP_ID'];
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`Error: ${envVar} environment variable is required`);
+    process.exit(1);
+  }
+}
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
+// Security middleware
+app.use(helmet());
+
+// CORS configuration
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Length', 'X-RateLimit-Reset'],
+  credentials: true
+}));
+
+// Body parsing middleware
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Initialize database
-const db = initializeDatabase();
+try {
+  await initializeDatabase();
+} catch (error) {
+  console.error('Failed to initialize database:', error);
+  process.exit(1);
+}
 
 // Routes
-app.post('/api/items',
-  [
-    body('name').notEmpty().trim(),
-    body('description').optional().trim()
-  ],
-  (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
+app.use('/auth', authRouter);
+app.use('/api', apiRouter);
 
-    const { name, description } = req.body;
-    db.run(
-      'INSERT INTO items (name, description) VALUES (?, ?)',
-      [name, description],
-      function(err) {
-        if (err) {
-          console.error(err);
-          return res.status(500).json({ error: 'Failed to create item' });
-        }
-        res.status(201).json({
-          id: this.lastID,
-          name,
-          description
-        });
-      }
-    );
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  
+  if (err.name === 'UnauthorizedError') {
+    return res.status(401).json({ error: 'Invalid token' });
   }
-);
-
-app.get('/api/items', (req, res) => {
-  db.all('SELECT * FROM items', [], (err, rows) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ error: 'Failed to retrieve items' });
-    }
-    res.json(rows);
+  
+  res.status(500).json({ 
+    error: 'Something went wrong!',
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Handle cleanup
-process.on('SIGINT', () => {
-  db.close((err) => {
-    if (err) {
-      console.error('Error closing database:', err);
-    } else {
-      console.log('Database connection closed');
-    }
-    process.exit(0);
+// Graceful shutdown
+async function shutdown(signal) {
+  console.log(`\n${signal} received. Starting graceful shutdown...`);
+  
+  // Close server
+  server.close(() => {
+    console.log('HTTP server closed');
   });
-});
+
+  // Close database connection
+  try {
+    await closeDatabase();
+  } catch (error) {
+    console.error('Error closing database:', error);
+  }
+
+  // Exit process
+  process.exit(0);
+}
+
+// Handle cleanup
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

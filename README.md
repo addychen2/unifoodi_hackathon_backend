@@ -36,4 +36,10 @@ docker run -p 3000:3000 -v $(pwd)/data:/app/data sqlite-api
 # or could try this:
 docker build -t sqlite-api .
 docker run -p 3000:3000 sqlite-api
+
+
+# with docker-compose
+docker-compose down -v
+
+docker-compose up --build
 ```
