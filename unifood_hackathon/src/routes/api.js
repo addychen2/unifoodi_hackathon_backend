@@ -1,57 +1,43 @@
+// src/routes/api.js
 import express from 'express';
-import { body, validationResult } from 'express-validator';
-import { createItem, getItems } from '../controllers/itemController.js';
+import { body } from 'express-validator';
+import { 
+  createItem, 
+  getItems, 
+  getItem, 
+  updateItem, 
+  deleteItem 
+} from '../controllers/itemController.js';
+import { authenticate } from '../middleware/auth.js';
 
 export const router = express.Router();
 
-// Create item endpoint
+// All routes in this file require authentication
+router.use(authenticate);
+
+// Create item
 router.post('/items',
   [
-    body('name').notEmpty().trim(),
-    body('description').optional().trim()
+    body('name').notEmpty().trim().escape(),
+    body('description').optional().trim().escape()
   ],
   createItem
 );
 
-// Get items endpoint
+// Get all items for authenticated user
 router.get('/items', getItems);
 
-// src/controllers/itemController.js
-import { getDatabase } from '../database/init.js';
+// Get single item
+router.get('/items/:id', getItem);
 
-export async function createItem(req, res) {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
+// Update item
+router.put('/items/:id',
+  [
+    body('name').notEmpty().trim().escape(),
+    body('description').optional().trim().escape()
+  ],
+  updateItem
+);
 
-  try {
-    const db = await getDatabase();
-    const { name, description } = req.body;
-
-    const result = await db.run(
-      'INSERT INTO items (name, description) VALUES (?, ?)',
-      [name, description]
-    );
-
-    res.status(201).json({
-      id: result.lastID,
-      name,
-      description
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to create item' });
-  }
-}
-
-export async function getItems(req, res) {
-  try {
-    const db = await getDatabase();
-    const items = await db.all('SELECT * FROM items');
-    res.json(items);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to retrieve items' });
-  }
-}
+// Delete item
+router.delete('/items/:id', deleteItem);
